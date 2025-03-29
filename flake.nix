@@ -26,35 +26,42 @@
           name = "audible-download-asin";
           runtimeInputs = [pkgs.audible-cli];
           text = ''
-            ASIN="$1"
-            BOOK="$AUDIBLE_BOOKS/$ASIN"
+            audible_download_asin() {
+              local asin
+              local book
 
-            if [ ! -d "$BOOK" ]; then
-              mkdir -p "$BOOK"
+              asin="$1"
+              book="$AUDIBLE_BOOKS/$asin"
 
-              echo "Downloading book with ASIN $ASIN to $BOOK"
+              if [ ! -d "$book" ]; then
+                mkdir -p "$book"
 
-              audible download \
-                --output-dir "$BOOK" \
-                --asin "$ASIN" \
-                --aax-fallback \
-                --quality best \
-                --pdf \
-                --cover \
-                --cover-size 1215 \
-                --chapter \
-                --annotation \
-                --no-confirm \
-                --overwrite \
-                --ignore-errors \
-                --jobs "$(nproc)" \
-                --filename-mode config \
-                --ignore-podcasts
+                echo "Downloading book with ASIN $asin to $book"
 
-              echo "Finished downloading book with ASIN $ASIN"
-            else
-              echo "Book with ASIN $ASIN already exists at $BOOK. Skipping."
-            fi
+                audible download \
+                  --output-dir "$book" \
+                  --asin "$asin" \
+                  --aax-fallback \
+                  --quality best \
+                  --pdf \
+                  --cover \
+                  --cover-size 1215 \
+                  --chapter \
+                  --annotation \
+                  --no-confirm \
+                  --overwrite \
+                  --ignore-errors \
+                  --jobs "$(nproc)" \
+                  --filename-mode config \
+                  --ignore-podcasts
+
+                echo "Finished downloading book with ASIN $asin"
+              else
+                echo "Book with ASIN $asin already exists at $book. Skipping."
+              fi
+            }
+
+            audible_download_asin "$@"
           '';
         };
         audible-download-book = pkgs.writeShellApplication {
@@ -68,76 +75,86 @@
           ];
           excludeShellChecks = [];
           text = ''
-            ASIN="$1"
-            BOOK="$AUDIBLE_BOOKS/$ASIN"
-            TRANSCODED_AAX="$BOOK/transcoded"
-            OPUS_HIGHEST_QUALITY_LEVEL="10"
+            audible_download_book() {
+              local asin
+              local book
+              local aax_file
+              local aax_file_backup
 
-            if [ ! -d "$BOOK" ]; then
-              audible-download-asin "$ASIN"
-            fi
+              asin="$1"
+              book="$AUDIBLE_BOOKS/$asin"
 
-            if [ ! -d "$BOOK" ]; then
-              echo "Failed to download book with ASIN $ASIN. Aborting."
-              exit 1
-            fi
+              transcoded_aax="$book/transcoded"
+              OPUS_HIGHEST_QUALITY_LEVEL="10"
 
-            if [ -d "$TRANSCODED_AAX" ]; then
-              echo "Book with ASIN $ASIN was already transcoded. Skipping"
-              exit 0
-            fi
+              if [ ! -d "$book" ]; then
+                audible-download-asin "$asin"
+              fi
 
-            echo "Converting book at $BOOK"
+              if [ ! -d "$book" ]; then
+                echo "Failed to download book with ASIN $asin. Aborting."
+                exit 1
+              fi
 
-            if [ ! -f "$AUDIBLE_AUTHCODE" ]; then
-              audible-get-authcode
-            fi
+              if [ -d "$transcoded_aax" ]; then
+                echo "Book with ASIN $asin was already transcoded. Skipping"
+                exit 0
+              fi
 
-            if [ ! -f "$AUDIBLE_AUTHCODE" ]; then
-              echo "Failed to get audible authcode at $AUDIBLE_AUTHCODE"
-              exit 1
-            fi
+              echo "Converting book at $book"
 
-            AAX_FILE="$(eza \
-              --absolute \
-              --no-permissions \
-              --no-filesize \
-              --no-user \
-              --no-time \
-              --no-git \
-              -1 \
-              "$BOOK" | rg ".(aax|aaxc)$"
-            )"
+              if [ ! -f "$AUDIBLE_AUTHCODE" ]; then
+                audible-get-authcode
+              fi
 
-            AAX_FILE_BACKUP="$AAX_FILE.bak"
+              if [ ! -f "$AUDIBLE_AUTHCODE" ]; then
+                echo "Failed to get audible authcode at $AUDIBLE_AUTHCODE"
+                exit 1
+              fi
 
-            echo "Checking for AAX file $AAX_FILE"
-            if [ ! -f "$AAX_FILE" ]; then
-              echo "No AAX or AAXC file found. Skipping"
-            else
-              echo "Validating AAX file $AAX_FILE..."
-              aaxtomp3 \
-                --authcode "$(cat "$AUDIBLE_AUTHCODE")" \
-                --validate \
-                "$AAX_FILE"
+              aax_file="$(eza \
+                --absolute \
+                --no-permissions \
+                --no-filesize \
+                --no-user \
+                --no-time \
+                --no-git \
+                -1 \
+                "$book" | rg ".(aax|aaxc)$"
+              )"
 
-              echo "Backing up AAX file to $AAX_FILE_BACKUP"
-              mkdir -p "$TRANSCODED_AAX"
-              cp "$AAX_FILE" "$AAX_FILE_BACKUP"
+              aax_file_backup="$aax_file.bak"
 
-              echo "Converting AAX files of the book at $BOOK to Opus format"
-              aaxtomp3 \
-                --authcode "$(cat "$AUDIBLE_AUTHCODE")" \
-                --use-audible-cli-data \
-                --opus \
-                --single \
-                --level "$OPUS_HIGHEST_QUALITY_LEVEL" \
-                --loglevel 2 \
-                --no-clobber \
-                --target_dir "$BOOK" \
-                --complete_dir "$TRANSCODED_AAX" \
-                "$AAX_FILE"
-            fi
+              echo "Checking for AAX file $aax_file"
+              if [ ! -f "$aax_file" ]; then
+                echo "No AAX or AAXC file found. Skipping"
+              else
+                echo "Validating AAX file $aax_file..."
+                aaxtomp3 \
+                  --authcode "$(cat "$AUDIBLE_AUTHCODE")" \
+                  --validate \
+                  "$aax_file"
+
+                echo "Backing up AAX file to $aax_file_backup"
+                mkdir -p "$transcoded_aax"
+                cp "$aax_file" "$aax_file_backup"
+
+                echo "Converting AAX files of the book at $book to Opus format"
+                aaxtomp3 \
+                  --authcode "$(cat "$AUDIBLE_AUTHCODE")" \
+                  --use-audible-cli-data \
+                  --opus \
+                  --single \
+                  --level "$OPUS_HIGHEST_QUALITY_LEVEL" \
+                  --loglevel 2 \
+                  --no-clobber \
+                  --target_dir "$book" \
+                  --complete_dir "$transcoded_aax" \
+                  "$aax_file"
+              fi
+            }
+
+            audible_download_book "$@"
           '';
         };
         audible-download-library = pkgs.writeShellApplication {
