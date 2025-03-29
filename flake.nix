@@ -51,11 +51,9 @@
               local asin
               local book
               local aax_file
-              local aax_file_backup
 
               asin="$(grep "$1" "$AUDIBLE_ASINS" | head -n1)"
               book="$AUDIBLE_BOOKS/$asin"
-
               transcoded_aax="$book/transcoded"
               OPUS_HIGHEST_QUALITY_LEVEL="10"
 
@@ -82,6 +80,7 @@
                 exit 1
               fi
 
+              echo "Checking in $asin for audio file"
               aax_file="$(eza \
                 --absolute \
                 --no-permissions \
@@ -93,23 +92,20 @@
                 "$book" | grep ".aax"
               )" || aax_file=""
 
-              aax_file_backup="$aax_file.bak"
-
-              echo "Checking for AAX file $aax_file"
               if [ ! -f "$aax_file" ]; then
-                echo "No AAX or AAXC file found. Skipping."
+                echo "No audio file found. Skipping."
               else
-                echo "Validating AAX file $aax_file..."
+                echo "Validating audio file in $asin..."
                 aaxtomp3 \
                   --authcode "$(cat "$AUDIBLE_AUTHCODE")" \
                   --validate \
                   "$aax_file"
 
-                echo "Backing up AAX file to $aax_file_backup"
+                echo "Backing up audio file in $asin"
                 mkdir -p "$transcoded_aax"
-                cp "$aax_file" "$aax_file_backup"
+                cp "$aax_file" "$aax_file.bak"
 
-                echo "Converting AAX or AAXC file of the book at $book to Opus format"
+                echo "Converting audio file in $asin to Opus format"
                 aaxtomp3 \
                   --authcode "$(cat "$AUDIBLE_AUTHCODE")" \
                   --use-audible-cli-data \
