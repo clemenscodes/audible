@@ -14,12 +14,17 @@
   in {
     packages = {
       ${system} = {
+        audible-get-authcode = pkgs.writeShellApplication {
+          name = "audible-get-authcode";
+          runtimeInputs = [pkgs.audible-cli];
+          text = ''
+            echo "Getting audible authcode..."
+            audible activation-bytes > "$AUDIBLE_AUTHCODE"
+          '';
+        };
         audible-download-asin = pkgs.writeShellApplication {
           name = "audible-download-asin";
-          runtimeInputs = [
-            pkgs.audible-cli
-            self.packages.${system}.audible-convert-book
-          ];
+          runtimeInputs = [pkgs.audible-cli];
           text = ''
             ASIN="$1"
             BOOK="$AUDIBLE_BOOKS/$ASIN"
@@ -52,8 +57,8 @@
             fi
           '';
         };
-        audible-convert-book = pkgs.writeShellApplication {
-          name = "audible-convert-book";
+        audible-download-book = pkgs.writeShellApplication {
+          name = "audible-download-book";
           runtimeInputs = [
             pkgs.audible-cli
             pkgs.aaxtomp3
@@ -65,7 +70,7 @@
           text = ''
             ASIN="$1"
             BOOK="$AUDIBLE_BOOKS/$ASIN"
-            TRANSCODED_AAX="$BOOK/transcode"
+            TRANSCODED_AAX="$BOOK/transcoded"
             OPUS_HIGHEST_QUALITY_LEVEL="10"
 
             if [ ! -d "$BOOK" ]; then
@@ -75,6 +80,11 @@
             if [ ! -d "$BOOK" ]; then
               echo "Failed to download book with ASIN $ASIN. Aborting."
               exit 1
+            fi
+
+            if [ -d "$TRANSCODED_AAX" ]; then
+              echo "Book with ASIN $ASIN was already transcoded. Skipping"
+              exit 0
             fi
 
             echo "Converting book at $BOOK"
@@ -130,14 +140,6 @@
             fi
           '';
         };
-        audible-get-authcode = pkgs.writeShellApplication {
-          name = "audible-get-authcode";
-          runtimeInputs = [pkgs.audible-cli];
-          text = ''
-            echo "Getting audible authcode..."
-            audible activation-bytes > "$AUDIBLE_AUTHCODE"
-          '';
-        };
         audible-download-library = pkgs.writeShellApplication {
           name = "audible-download-library";
           runtimeInputs = [
@@ -153,7 +155,7 @@
 
             echo "Downloading library..."
             while IFS= read -r asin; do
-              audible-download-asin "$asin"
+              audible-download-book "$asin"
             done < "$AUDIBLE_ASINS"
 
             echo "Finished downloading library"
@@ -169,7 +171,7 @@
             pkgs.aaxtomp3
             self.packages.${system}.audible-download-asin
             self.packages.${system}.audible-download-library
-            self.packages.${system}.audible-convert-book
+            self.packages.${system}.audible-download-book
             self.packages.${system}.audible-get-authcode
           ];
           shellHook = ''
