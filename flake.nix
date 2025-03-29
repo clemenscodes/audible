@@ -21,25 +21,30 @@
             ASIN="$1"
             BOOK="$AUDIBLE_BOOKS/$ASIN"
 
-            mkdir -p "$BOOK"
+            if [ ! -d "$BOOK" ]; then
+              mkdir -p "$BOOK"
 
-            echo "Downloading book with ASIN $ASIN to $BOOK"
+              echo "Downloading book with ASIN $ASIN to $BOOK"
 
-            audible download \
-              --output-dir "$BOOK" \
-              --asin "$ASIN" \
-              --aax \
-              --quality best \
-              --pdf \
-              --cover \
-              --chapter \
-              --annotation \
-              --no-confirm \
-              --overwrite \
-              --ignore-errors \
-              --jobs "$(nproc)" \
-              --filename-mode config \
-              --ignore-podcasts
+              audible download \
+                --output-dir "$BOOK" \
+                --asin "$ASIN" \
+                --aax-fallback \
+                --quality best \
+                --pdf \
+                --cover \
+                --cover-size 1215 \
+                --chapter \
+                --annotation \
+                --no-confirm \
+                --overwrite \
+                --ignore-errors \
+                --jobs "$(nproc)" \
+                --filename-mode config \
+                --ignore-podcasts
+            else
+              echo "Book with ASIN $ASIN already exists at $BOOK. Skipping."
+            fi
           '';
         };
         audible-download-library = pkgs.writeShellApplication {
