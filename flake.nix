@@ -155,6 +155,7 @@
                   --ignore-errors \
                   --jobs "$(nproc)" \
                   --filename-mode config \
+                  --timeout 300 \
                   --ignore-podcasts
 
                 echo "Finished downloading book with ASIN $asin"
