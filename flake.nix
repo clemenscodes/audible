@@ -175,6 +175,28 @@
             audible activation-bytes > "$AUDIBLE_AUTHCODE"
           '';
         };
+        audible-export-books = pkgs.writeShellApplication {
+          name = "audible-export-books";
+          runtimeInputs = [pkgs.audible-cli];
+          text = ''
+            BOOKS="$XDG_PUBLICSHARE_DIR/books"
+
+            mkdir -p "$BOOKS"
+
+            echo "Exporting books to $BOOKS..."
+
+            cp -r "$AUDIBLE_BOOKS"/* "$BOOKS"
+
+            for book in "$BOOKS"/* ; do
+              if [ -d "$book" ]; then
+                find "$book" -maxdepth 1 -type f \( -name "*.aax" -o -name "*.aaxc" \) -delete
+                if [ -d "$book/transcode" ]; then
+                  rm -rf "$book/transcode"
+                fi
+              fi
+            done
+          '';
+        };
       };
     };
     devShells = {
@@ -187,6 +209,7 @@
             self.packages.${system}.audible-download-library
             self.packages.${system}.audible-download-book
             self.packages.${system}.audible-get-authcode
+            self.packages.${system}.audible-export-books
           ];
           shellHook = ''
             export AUDIBLE_CONFIG_DIR="$(pwd)/.audible"
