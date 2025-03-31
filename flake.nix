@@ -21,19 +21,50 @@
             self.packages.${system}.audible-download-book
           ];
           text = ''
-            echo "Exporting library..."
-            audible library export --format "$AUDIBLE_FORMAT" --output "$AUDIBLE_LIBRARY"
+            audible_download_library() {
+                echo "Exporting library..."
+                audible library export --format "$AUDIBLE_FORMAT" --output "$AUDIBLE_LIBRARY"
 
-            echo "Collecting ASIN of books..."
-            tail -n +2 "$AUDIBLE_LIBRARY" | awk '{print $1}' > "$AUDIBLE_ASINS"
+                echo "Collecting ASINs of books..."
+                tail -n +2 "$AUDIBLE_LIBRARY" | awk '{print $1}' > "$AUDIBLE_ASINS"
 
-            echo "Downloading library..."
+                if [ -f "$AUDIBLE_DOWNLOADED_ASINS" ]; then
+                    rm -f "$AUDIBLE_DOWNLOADED_ASINS"
+                fi
 
-            while IFS= read -r asin; do
-              audible-download-book "$asin"
-            done < "$AUDIBLE_ASINS"
+                download_books() {
+                    touch "$AUDIBLE_DOWNLOADED_ASINS"
 
-            echo "Finished downloading library"
+                    if [ -f "$AUDIBLE_MISSING_ASINS" ]; then
+                        rm -f "$AUDIBLE_MISSING_ASINS"
+                    fi
+
+                    while IFS= read -r asin || [[ -n "$asin" ]]; do
+                        if ! grep -qFx "$asin" "$AUDIBLE_DOWNLOADED_ASINS"; then
+                            echo "$asin" >> "$AUDIBLE_MISSING_ASINS"
+                        fi
+                    done < "$AUDIBLE_ASINS"
+
+                    if [ ! -f "$AUDIBLE_MISSING_ASINS" ]; then
+                        return 0
+                    fi
+
+                    while IFS= read -r asin || [[ -n "$asin" ]]; do
+                        audible-download-book "$asin"
+                        echo "$asin" >> "$AUDIBLE_DOWNLOADED_ASINS"
+                    done < "$AUDIBLE_MISSING_ASINS"
+
+                    return 1
+                }
+
+                while ! download_books; do
+                    echo "Checking for more books..."
+                done
+
+                echo "All books downloaded successfully!"
+            }
+
+            audible_download_library
           '';
         };
         audible-download-book = pkgs.writeShellApplication {
@@ -41,83 +72,91 @@
           runtimeInputs = [
             pkgs.audible-cli
             pkgs.aaxtomp3
-            pkgs.eza
             self.packages.${system}.audible-download-asin
             self.packages.${system}.audible-get-authcode
           ];
-          excludeShellChecks = ["SC2317"];
+          excludeShellChecks = ["SC2181" "SC2317"];
           text = ''
             audible_download_book() {
-              local asin
-              local book
-              local aax_file
+                local asin
+                local book
+                local transcoded_aax
+                local opus_highest_quality_level
+                local aax_file
+                local authcode
 
-              asin="$(grep "$1" "$AUDIBLE_ASINS" | head -n1)"
-              book="$AUDIBLE_BOOKS/$asin"
-              transcoded_aax="$book/transcoded"
-              OPUS_HIGHEST_QUALITY_LEVEL="10"
+                asin="$1"
+                book="$AUDIBLE_BOOKS/$asin"
+                transcoded_aax="$book/transcoded"
+                opus_highest_quality_level="10"
 
-              if [ ! -d "$book" ]; then
-                audible-download-asin "$asin"
-              fi
+                if [ ! -d "$book" ]; then
+                    echo "Downloading book with ASIN: $asin..."
+                    audible-download-asin "$asin"
 
-              if [ ! -d "$book" ]; then
-                echo "Failed to download book with ASIN $asin. Skipping."
-                return
-              fi
+                    if [ ! -d "$book" ]; then
+                        echo "Download failed for ASIN: $asin. Skipping."
+                        return 1
+                    fi
+                fi
 
-              if [ -d "$transcoded_aax" ]; then
-                echo "Book with ASIN $asin was already transcoded. Skipping."
-                return
-              fi
+                if [ -d "$transcoded_aax" ]; then
+                    echo "Book with ASIN $asin was already transcoded. Skipping."
+                    return 0
+                fi
 
-              if [ ! -f "$AUDIBLE_AUTHCODE" ]; then
-                audible-get-authcode
-              fi
+                if [ ! -f "$AUDIBLE_AUTHCODE" ]; then
+                    echo "Fetching Audible authcode..."
+                    audible-get-authcode
 
-              if [ ! -f "$AUDIBLE_AUTHCODE" ]; then
-                echo "Failed to get audible authcode at $AUDIBLE_AUTHCODE."
-                exit 1
-              fi
+                    if [ ! -f "$AUDIBLE_AUTHCODE" ]; then
+                        echo "Failed to get Audible authcode."
+                        return 1
+                    fi
+                fi
 
-              echo "Checking in $asin for audio file"
-              aax_file="$(eza \
-                --absolute \
-                --no-permissions \
-                --no-filesize \
-                --no-user \
-                --no-time \
-                --no-git \
-                -1 \
-                "$book" | grep ".aax"
-              )" || aax_file=""
+                authcode="$(cat "$AUDIBLE_AUTHCODE")"
 
-              if [ ! -f "$aax_file" ]; then
-                echo "No audio file found. Skipping."
-              else
-                echo "Validating audio file in $asin..."
-                aaxtomp3 \
-                  --authcode "$(cat "$AUDIBLE_AUTHCODE")" \
-                  --validate \
-                  "$aax_file"
+                echo "Searching for audio file in $book..."
+                aax_file="$(find "$book" -maxdepth 1 -type f -name "*.aax" -o -name "*.aaxc" | head -n 1)"
 
-                echo "Backing up audio file in $asin"
+                if [ -z "$aax_file" ]; then
+                    echo "No valid audio file found. Skipping."
+                    return 1
+                fi
+
+                echo "Validating audio file..."
+                aaxtomp3 --authcode "$authcode" --validate "$aax_file"
+
+                if [ "$?" -ne 0 ]; then
+                    echo "Validation failed. Skipping."
+                    return 1
+                fi
+
+                echo "Creating backup of audio file..."
                 mkdir -p "$transcoded_aax"
                 cp "$aax_file" "$aax_file.bak"
 
-                echo "Converting audio file in $asin to Opus format"
+                echo "Converting audio file to Opus format..."
                 aaxtomp3 \
-                  --authcode "$(cat "$AUDIBLE_AUTHCODE")" \
-                  --use-audible-cli-data \
-                  --opus \
-                  --single \
-                  --level "$OPUS_HIGHEST_QUALITY_LEVEL" \
-                  --loglevel 2 \
-                  --no-clobber \
-                  --target_dir "$book" \
-                  --complete_dir "$transcoded_aax" \
-                  "$aax_file"
-              fi
+                    --authcode "$authcode" \
+                    --use-audible-cli-data \
+                    --opus \
+                    --single \
+                    --level "$opus_highest_quality_level" \
+                    --loglevel 2 \
+                    --no-clobber \
+                    --target_dir "$book" \
+                    --complete_dir "$transcoded_aax" \
+                    "$aax_file"
+
+                if [ "$?" -ne 0 ]; then
+                    echo "Conversion failed."
+                    return 1
+                fi
+
+                echo "Conversion complete for ASIN $asin."
+                return 0
             }
 
             audible_download_book "$1"
@@ -129,39 +168,50 @@
           excludeShellChecks = ["SC2317"];
           text = ''
             audible_download_asin() {
-              local asin
-              local book
+                local asin
+                local book
+                local retries
 
-              asin="$(grep "$1" "$AUDIBLE_ASINS" | head -n1)"
-              book="$AUDIBLE_BOOKS/$asin"
+                asin="$(grep "$1" "$AUDIBLE_ASINS" | head -n1)"
+                book="$AUDIBLE_BOOKS/$asin"
+                retries=3
 
-              if [ ! -d "$book" ]; then
-                mkdir -p "$book"
+                if [ ! -d "$book" ]; then
+                    mkdir -p "$book"
+                fi
 
-                echo "Downloading book with ASIN $asin to $book"
+                for ((i = 1; i <= retries; i++)); do
+                    echo "Attempt $i: Downloading book with ASIN $asin to $book"
 
-                audible download \
-                  --output-dir "$book" \
-                  --asin "$asin" \
-                  --aax-fallback \
-                  --quality best \
-                  --pdf \
-                  --cover \
-                  --cover-size 1215 \
-                  --chapter \
-                  --annotation \
-                  --no-confirm \
-                  --overwrite \
-                  --ignore-errors \
-                  --jobs "$(nproc)" \
-                  --filename-mode config \
-                  --timeout 300 \
-                  --ignore-podcasts
+                    audible download \
+                        --output-dir "$book" \
+                        --asin "$asin" \
+                        --aax-fallback \
+                        --quality best \
+                        --pdf \
+                        --cover \
+                        --cover-size 1215 \
+                        --chapter \
+                        --annotation \
+                        --no-confirm \
+                        --overwrite \
+                        --ignore-errors \
+                        --jobs "$(nproc)" \
+                        --filename-mode config \
+                        --timeout 300 \
+                        --ignore-podcasts
 
-                echo "Finished downloading book with ASIN $asin"
-              else
-                echo "Book with ASIN $asin already exists at $book. Skipping."
-              fi
+                    if find "$book" -maxdepth 1 -type f \( -name "*.aax" -o -name "*.aaxc" \) &>/dev/null; then
+                        echo "Successfully downloaded book with ASIN $asin"
+                        echo "$asin" >> "$AUDIBLE_DOWNLOADED_ASINS"
+                        return 0
+                    else
+                        echo "Download failed for ASIN $asin. Retrying..."
+                    fi
+                done
+
+                echo "Failed to download book with ASIN $asin after $retries attempts."
+                return 1
             }
 
             audible_download_asin "$1"
@@ -179,22 +229,26 @@
           name = "audible-export-books";
           runtimeInputs = [pkgs.audible-cli];
           text = ''
-            BOOKS="$XDG_PUBLICSHARE_DIR/books"
+            audible_export_books() {
+                BOOKS="$XDG_PUBLICSHARE_DIR/books"
 
-            mkdir -p "$BOOKS"
+                mkdir -p "$BOOKS"
 
-            echo "Exporting books to $BOOKS..."
+                echo "Exporting books to $BOOKS..."
 
-            cp -r "$AUDIBLE_BOOKS"/* "$BOOKS"
+                cp -r --preserve=mode,timestamps "$AUDIBLE_BOOKS"/* "$BOOKS"
 
-            for book in "$BOOKS"/* ; do
-              if [ -d "$book" ]; then
-                find "$book" -maxdepth 1 -type f \( -name "*.aax" -o -name "*.aaxc" \) -delete
-                if [ -d "$book/transcode" ]; then
-                  rm -rf "$book/transcode"
-                fi
-              fi
-            done
+                for book in "$BOOKS"/*; do
+                    if [ -d "$book" ]; then
+                        find "$book" -maxdepth 1 -type f \( -name "*.aax" -o -name "*.aaxc" \) -delete
+                        if [ -d "$book/transcode" ]; then
+                            rm -rf "$book/transcode"
+                        fi
+                    fi
+                done
+            }
+
+            audible_export_books
           '';
         };
       };
@@ -214,6 +268,8 @@
           shellHook = ''
             export AUDIBLE_CONFIG_DIR="$(pwd)/.audible"
             export AUDIBLE_ASINS="$AUDIBLE_CONFIG_DIR/asins"
+            export AUDIBLE_DOWNLOADED_ASINS="$AUDIBLE_CONFIG_DIR/downloaded_asins"
+            export AUDIBLE_MISSING_ASINS="$AUDIBLE_CONFIG_DIR/missing_asins"
             export AUDIBLE_FORMAT="tsv"
             export AUDIBLE_LIBRARY="$AUDIBLE_CONFIG_DIR/library.$AUDIBLE_FORMAT"
             export AUDIBLE_BOOKS="$AUDIBLE_CONFIG_DIR/books"
