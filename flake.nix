@@ -227,25 +227,24 @@
         };
         audible-export-books = pkgs.writeShellApplication {
           name = "audible-export-books";
-          runtimeInputs = [pkgs.audible-cli];
+          runtimeInputs = [pkgs.rsync];
           text = ''
             audible_export_books() {
-                BOOKS="$XDG_PUBLICSHARE_DIR/books"
+                BOOKS="''${BOOKS:-$XDG_PUBLICSHARE_DIR/books}"
 
                 mkdir -p "$BOOKS"
 
                 echo "Exporting books to $BOOKS..."
 
-                cp -r --preserve=mode,timestamps "$AUDIBLE_BOOKS"/* "$BOOKS"
-
-                for book in "$BOOKS"/*; do
-                    if [ -d "$book" ]; then
-                        find "$book" -maxdepth 1 -type f \( -name "*.aax" -o -name "*.aaxc" \) -delete
-                        if [ -d "$book/transcode" ]; then
-                            rm -rf "$book/transcode"
-                        fi
-                    fi
-                done
+                rsync \
+                    -av \
+                    --progress \
+                    --exclude='*.aax' \
+                    --exclude='*.aaxc' \
+                    --exclude='*.aax.bak' \
+                    --exclude='*.aaxc.bak' \
+                    --exclude='*/transcoded/' \
+                    "$AUDIBLE_BOOKS/" "$BOOKS/"
             }
 
             audible_export_books
@@ -257,6 +256,7 @@
       ${system} = {
         default = pkgs.mkShell {
           buildInputs = [
+            pkgs.rsync
             pkgs.audible-cli
             pkgs.aaxtomp3
             self.packages.${system}.audible-download-asin
