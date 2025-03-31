@@ -91,7 +91,6 @@
                 opus_highest_quality_level="10"
 
                 if [ ! -d "$book" ]; then
-                    echo "Downloading book with ASIN: $asin..."
                     audible-download-asin "$asin"
 
                     if [ ! -d "$book" ]; then
@@ -219,10 +218,13 @@
         };
         audible-get-authcode = pkgs.writeShellApplication {
           name = "audible-get-authcode";
-          runtimeInputs = [pkgs.audible-cli];
+          runtimeInputs = [
+            pkgs.audible-cli
+            pkgs.jq
+          ];
           text = ''
-            echo "Getting audible authcode..."
-            audible activation-bytes > "$AUDIBLE_AUTHCODE"
+            audible activation-bytes >/dev/null
+            jq -r '."activation_bytes"' "$AUDIBLE_CONFIG_FILE" > "$AUDIBLE_AUTHCODE"
           '';
         };
         audible-export-books = pkgs.writeShellApplication {
@@ -274,6 +276,7 @@
             export AUDIBLE_LIBRARY="$AUDIBLE_CONFIG_DIR/library.$AUDIBLE_FORMAT"
             export AUDIBLE_BOOKS="$AUDIBLE_CONFIG_DIR/books"
             export AUDIBLE_AUTHCODE="$AUDIBLE_CONFIG_DIR/authcode"
+            export AUDIBLE_CONFIG_FILE="$AUDIBLE_CONFIG_DIR/audible.json"
 
             mkdir -p $AUDIBLE_BOOKS
           '';
